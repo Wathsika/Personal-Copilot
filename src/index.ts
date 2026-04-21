@@ -1,6 +1,6 @@
 import "dotenv/config"; // Load .env file
 import { Command } from "commander";
-import { startRepl } from "./cli/reply.js";
+import { startRepl } from "./cli/repl.js";
 import { ui } from "./cli/ui.js";
 
 const program = new Command();

@@ -77,10 +77,20 @@ export class AIService {
     ];
 
     this.model = this.genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemma-4-26b-a4b-it",
       tools: tools as any,
-      systemInstruction:
-        "You are a Personal Windows Copilot. You have access to a 'Script Library' of custom automations. If a user asks for a complex task, check the library first using 'list_library_scripts'.",
+      systemInstruction: `
+        You are a Personal Windows Copilot. Your goal is to solve user requests efficiently.
+        
+        CRITICAL PROTOCOL:
+        1. When a user asks for a task, check if a suitable script exists in your library using 'list_library_scripts'.
+        2. If no suitable script exists and the task is complex, DO NOT just run a one-off command. 
+        3. Instead, follow this AUTONOMOUS CHAIN:
+           a. Write a high-quality PowerShell script.
+           b. Use 'save_to_library' to persist it.
+           c. Use 'run_library_script' to execute it.
+        4. Always explain your reasoning to the user (e.g., "I don't have a script for this, so I'm creating a new automation...").
+      `,
     });
 
     this.chatSession = this.model.startChat();
@@ -102,33 +112,49 @@ Docker: ${context.dockerStatus}
 User Request: `;
   }
 
-  async processMessage(message: string, context: SystemContext) {
-    // We wrap the user message with the latest system context
-    const contextualMessage = this.buildContextPrompt(context) + message;
+  /**
+   * Formats the first message of a conversation to include system context
+   */
+  formatContextualInput(message: string, context: any): string {
+    return `
+[SYSTEM_CONTEXT]
+User: ${context.username}
+OS: ${context.os}
+CWD: ${context.cwd}
+Git: ${context.gitBranch || "none"}
+Docker: ${context.dockerStatus}
+[/SYSTEM_CONTEXT]
 
-    const result = await this.chatSession.sendMessage(contextualMessage);
+User Request: ${message}`;
+  }
+
+  /**
+   * Handles the actual message sending
+   */
+  async processMessage(input: string | any[], context?: any) {
+    let finalInput = input;
+    
+    // If it's the first turn (string input) and context is provided, format it
+    if (typeof input === "string" && context) {
+      finalInput = this.formatContextualInput(input, context);
+    }
+
+    // Input can be a string (first turn) or an array of parts (function results)
+    const result = await this.chatSession.sendMessage(finalInput);
     const response = result.response;
 
-    const candidates = response.candidates;
-    const call = candidates?.[0]?.content?.parts?.find((p) => p.functionCall);
+    const candidate = response.candidates?.[0];
+    const call = candidate?.content?.parts?.find(
+      (p) => p.functionCall,
+    );
 
-    if (call && call.functionCall) {
+    if (call?.functionCall) {
       return {
         type: "function",
         name: call.functionCall.name,
         args: call.functionCall.args,
       };
     }
-
     return { type: "text", text: response.text() };
-  }
-
-  async sendFunctionResult(functionName: string, output: any) {
-    const result = await this.chatSession.sendMessage([
-      {
-        functionResponse: { name: functionName, response: { content: output } },
-      },
-    ]);
-    return result.response.text();
   }
 }
