@@ -1,17 +1,26 @@
 import readline from "readline";
 import chalk from "chalk";
 import ora from "ora";
+import { GeminiService } from "../llm/llm.js";
 import { ui } from "./ui.js";
-import { logger } from "../storage/logger.js";
 
 export async function startRepl() {
+  // Ensure the API key exists
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error(ui.error("GEMINI_API_KEY is missing in .env file."));
+    process.exit(1);
+  }
+
+  const gemini = new GeminiService(apiKey);
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.magenta("devops-ai > "),
+    prompt: chalk.magenta("personal-copilot > "),
   });
 
-  console.log(ui.info('Connected. Type "exit" to quit.'));
+  console.log(ui.info("How can I help you today?"));
   rl.prompt();
 
   rl.on("line", async (line) => {
@@ -23,24 +32,32 @@ export async function startRepl() {
     }
 
     if (input) {
-      // PHASE 1: Mocking the AI response
-      const spinner = ora("Agent processing...").start();
+      const spinner = ora("Agent is thinking...").start();
 
-      // Simulate slight delay
-      await new Promise((res) => setTimeout(res, 800));
+      try {
+        // Start the agent output line
+        process.stdout.write(chalk.cyan("Agent: "));
 
-      spinner.stop();
-      console.log(chalk.cyan("Agent: ") + `I received: "${input}".`);
-      console.log(chalk.dim("Phase 2 will connect this to Gemini API."));
+        const stream = gemini.sendMessageStream(input);
 
-      logger.info({ input }, "User terminal query");
+        spinner.stop(); // Stop spinner as soon as first token arrives
+
+        for await (const chunk of stream) {
+          process.stdout.write(chunk); // "Type" the response chunk by chunk
+        }
+
+        process.stdout.write("\n\n"); // Add spacing after response
+      } catch (err: any) {
+        spinner.fail("Error");
+        console.log(ui.error(err.message));
+      }
     }
 
     rl.prompt();
   });
 
   rl.on("close", () => {
-    console.log(chalk.yellow("\nShutting down. Session logged."));
+    console.log(chalk.yellow("\nSession ended."));
     process.exit(0);
   });
 }
