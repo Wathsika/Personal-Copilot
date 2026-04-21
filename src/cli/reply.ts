@@ -1,63 +1,79 @@
 import readline from "readline";
 import chalk from "chalk";
 import ora from "ora";
-import { GeminiService } from "../llm/llm.js";
+import { AIService } from "../llm/ai-service.js";
+import { ShellExecutor } from "../execution/shell-executor.js";
 import { ui } from "./ui.js";
 
 export async function startRepl() {
-  // Ensure the API key exists
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error(ui.error("GEMINI_API_KEY is missing in .env file."));
-    process.exit(1);
-  }
-
-  const gemini = new GeminiService(apiKey);
+  const ai = new AIService(process.env.GEMINI_API_KEY!);
+  const shell = new ShellExecutor();
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.magenta("personal-copilot > "),
+    prompt: chalk.magenta("copilot > "),
   });
 
-  console.log(ui.info("How can I help you today?"));
+  console.log(ui.info("Windows Copilot Active."));
   rl.prompt();
 
   rl.on("line", async (line) => {
     const input = line.trim();
+    if (!input) return rl.prompt();
+    if (input.toLowerCase() === "exit") return rl.close();
 
-    if (input.toLowerCase() === "exit" || input.toLowerCase() === "quit") {
-      rl.close();
-      return;
-    }
+    const spinner = ora("Thinking...").start();
 
-    if (input) {
-      const spinner = ora("Agent is thinking...").start();
+    try {
+      const response = await ai.processMessage(input);
+      spinner.stop();
 
-      try {
-        // Start the agent output line
-        process.stdout.write(chalk.cyan("Agent: "));
+      if (response.type === "text") {
+        console.log(chalk.cyan("Agent: ") + response.text);
+      } else if (
+        response.type === "function" &&
+        response.name === "run_command"
+      ) {
+        const { command, description } = response.args as any;
 
-        const stream = gemini.sendMessageStream(input);
+        // --- APPROVAL GATE ---
+        console.log(chalk.yellow("\n⚠️  ACTION REQUIRED:"));
+        console.log(`${chalk.white("Purpose:")} ${description}`);
+        console.log(`${chalk.white("Command:")} ${chalk.green(command)}`);
 
-        spinner.stop(); // Stop spinner as soon as first token arrives
+        const confirm = await new Promise((resolve) => {
+          rl.question(
+            chalk.bold("\nExecute this command? (y/n): "),
+            (answer) => {
+              resolve(answer.toLowerCase() === "y");
+            },
+          );
+        });
 
-        for await (const chunk of stream) {
-          process.stdout.write(chunk); // "Type" the response chunk by chunk
+        if (confirm) {
+          const execSpinner = ora("Executing...").start();
+          const result = await shell.execute(command);
+          execSpinner.stop();
+
+          // Feed result back to AI to summarize
+          const summarySpinner = ora("Summarizing...").start();
+          const summary = await ai.sendFunctionResult(
+            "run_command",
+            result.stdout || result.stderr,
+          );
+          summarySpinner.stop();
+
+          console.log(chalk.cyan("\nAgent: ") + summary);
+        } else {
+          console.log(chalk.red("Command cancelled by user."));
         }
-
-        process.stdout.write("\n\n"); // Add spacing after response
-      } catch (err: any) {
-        spinner.fail("Error");
-        console.log(ui.error(err.message));
       }
+    } catch (err: any) {
+      spinner.fail("Error");
+      console.log(ui.error(err.message));
     }
 
     rl.prompt();
-  });
-
-  rl.on("close", () => {
-    console.log(chalk.yellow("\nSession ended."));
-    process.exit(0);
   });
 }
