@@ -14,7 +14,7 @@ export class AIService {
         functionDeclarations: [
           {
             name: "run_command",
-            description: "Execute a PowerShell command on the Windows machine.",
+            description: "Execute a one-off PowerShell command.",
             parameters: {
               type: "object",
               properties: {
@@ -24,6 +24,54 @@ export class AIService {
               required: ["command", "description"],
             },
           },
+          {
+            name: "list_library_scripts",
+            description:
+              "List all custom automation scripts available in the user's personal library.",
+            parameters: { type: "object", properties: {} },
+          },
+          {
+            name: "run_library_script",
+            description: "Execute a specific script from the library by name.",
+            parameters: {
+              type: "object",
+              properties: {
+                scriptName: {
+                  type: "string",
+                  description: "The filename of the script (e.g. cleanup.ps1)",
+                },
+                args: {
+                  type: "string",
+                  description: "Any arguments to pass to the script.",
+                },
+              },
+              required: ["scriptName"],
+            },
+          },
+          {
+            name: "save_to_library",
+            description:
+              "Create a new automation script and save it to the user's personal library for future use.",
+            parameters: {
+              type: "object",
+              properties: {
+                scriptName: {
+                  type: "string",
+                  description: "The filename (e.g., 'cleanup-logs.ps1')",
+                },
+                content: {
+                  type: "string",
+                  description: "The full script code.",
+                },
+                description: {
+                  type: "string",
+                  description:
+                    "A one-sentence explanation of what the script does.",
+                },
+              },
+              required: ["scriptName", "content", "description"],
+            },
+          },
         ],
       },
     ];
@@ -31,6 +79,8 @@ export class AIService {
     this.model = this.genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
       tools: tools as any,
+      systemInstruction:
+        "You are a Personal Windows Copilot. You have access to a 'Script Library' of custom automations. If a user asks for a complex task, check the library first using 'list_library_scripts'.",
     });
 
     this.chatSession = this.model.startChat();
