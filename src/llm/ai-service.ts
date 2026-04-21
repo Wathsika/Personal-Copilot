@@ -1,9 +1,5 @@
-import {
-  GoogleGenerativeAI,
-  ChatSession,
-  type Content,
-} from "@google/generative-ai";
-import { logger } from "../storage/logger.js";
+import { GoogleGenerativeAI, ChatSession } from "@google/generative-ai";
+import type { SystemContext } from "../context/context-provider.js";
 
 export class AIService {
   private genAI: GoogleGenerativeAI;
@@ -13,26 +9,17 @@ export class AIService {
   constructor(apiKey: string) {
     this.genAI = new GoogleGenerativeAI(apiKey);
 
-    // Define the tools (functions) the AI can use
     const tools = [
       {
         functionDeclarations: [
           {
             name: "run_command",
-            description:
-              "Execute a PowerShell command on the Windows machine to help the user with system tasks, files, or devops.",
+            description: "Execute a PowerShell command on the Windows machine.",
             parameters: {
               type: "object",
               properties: {
-                command: {
-                  type: "string",
-                  description: "The full PowerShell command to run.",
-                },
-                description: {
-                  type: "string",
-                  description:
-                    "A short explanation of what this command will do.",
-                },
+                command: { type: "string" },
+                description: { type: "string" },
               },
               required: ["command", "description"],
             },
@@ -43,23 +30,37 @@ export class AIService {
 
     this.model = this.genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
-      tools: tools as any, // Attach tools here
-      systemInstruction:
-        "You are a Personal Windows Copilot. You can run commands via the 'run_command' tool. Always explain what you are about to do. If a task requires looking at files or system state, use a command first.",
+      tools: tools as any,
     });
 
     this.chatSession = this.model.startChat();
   }
 
-  async processMessage(message: string) {
-    const result = await this.chatSession.sendMessage(message);
+  /**
+   * Generates a prompt prefix that explains the current system state to the AI
+   */
+  private buildContextPrompt(context: SystemContext): string {
+    return `
+[SYSTEM CONTEXT]
+User: ${context.username}
+OS: ${context.os}
+Directory: ${context.cwd}
+Git Branch: ${context.gitBranch || "Not a git repository"}
+Docker: ${context.dockerStatus}
+[END CONTEXT]
+
+User Request: `;
+  }
+
+  async processMessage(message: string, context: SystemContext) {
+    // We wrap the user message with the latest system context
+    const contextualMessage = this.buildContextPrompt(context) + message;
+
+    const result = await this.chatSession.sendMessage(contextualMessage);
     const response = result.response;
 
-    // Check if the AI wants to call a function
     const candidates = response.candidates;
-    const call = candidates?.[0]?.content?.parts?.find(
-      (p) => p.functionCall,
-    );
+    const call = candidates?.[0]?.content?.parts?.find((p) => p.functionCall);
 
     if (call && call.functionCall) {
       return {
@@ -69,19 +70,13 @@ export class AIService {
       };
     }
 
-    return {
-      type: "text",
-      text: response.text(),
-    };
+    return { type: "text", text: response.text() };
   }
 
   async sendFunctionResult(functionName: string, output: any) {
     const result = await this.chatSession.sendMessage([
       {
-        functionResponse: {
-          name: functionName,
-          response: { content: output },
-        },
+        functionResponse: { name: functionName, response: { content: output } },
       },
     ]);
     return result.response.text();

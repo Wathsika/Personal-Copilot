@@ -3,11 +3,13 @@ import chalk from "chalk";
 import ora from "ora";
 import { AIService } from "../llm/ai-service.js";
 import { ShellExecutor } from "../execution/shell-executor.js";
+import { ContextProvider } from "../context/context-provider.js";
 import { ui } from "./ui.js";
 
 export async function startRepl() {
   const ai = new AIService(process.env.GEMINI_API_KEY!);
   const shell = new ShellExecutor();
+  const contextProvider = new ContextProvider();
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -26,7 +28,8 @@ export async function startRepl() {
     const spinner = ora("Thinking...").start();
 
     try {
-      const response = await ai.processMessage(input);
+      const context = await contextProvider.getSnapshot();
+      const response = await ai.processMessage(input, context);
       spinner.stop();
 
       if (response.type === "text") {
